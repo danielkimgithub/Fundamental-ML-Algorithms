@@ -2,7 +2,7 @@
 
 Data Modeling Projects Using R/RStudio
 - Project 1: 
-- Project 2:
-- Project 3:
-- Project 4:
+- Project 2: SVM
+- Project 3: Decision Tree
+- Project 4: Clustering (Supervised and Unsupervised)
 - Project 5:
