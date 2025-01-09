@@ -1,0 +1,436 @@
+---
+title: "hw4Clustering"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+date: "`r Sys.Date()`"
+---
+
+# HW 4 - DSC 441
+
+## Problem 1:
+
+For this problem, you will tune and apply kNN and compare it to other classifiers. We will use the wine quality data, which has a number of measurements about chemical components in wine, plus a quality rating. There are separate files for red and white wines, so the first step is some data preparation.
+
+-   a: Load the two provided wine quality data sets and prepare them by (1) ensuring that all the variables have the right type (e.g., what is numeric vs. factor), (2) adding a type column to each that indicates if it is red or white wine and (2) merging the two tables together into one table (hint: try full_join()). You now have one table that contains the data on red and white wine, with a column that tells if the wine was from the red or white set (the type column you made).
+
+```{r dataset setup}
+library(readr)
+library(dplyr)
+library(tidyverse)
+library(caret)
+
+# load two datasets
+red_wine <- read_csv2("/Users/danielkim/Downloads/winequality-red.csv")
+white_wine <- read_csv2("/Users/danielkim/Downloads/winequality-white.csv")
+
+# type column added to both data sets (red = 1, white = 0)
+red_wine$type <- as.factor(1)
+white_wine$type <- as.factor(0)
+
+# convert data type for residual sugar in white wine table to data type for residual sugar in red wine table
+white_wine <- white_wine %>% mutate(`residual sugar` = as.double(`residual sugar`))
+head(red_wine)
+head(white_wine)
+
+# merge the two tables together
+wine <- full_join(red_wine, white_wine)
+summary(wine) # NA row in total sulfur dioxide column
+sum(is.na(wine)) # 2 rows with NA column in entire data set
+na_rows <- wine[is.na(wine$`total sulfur dioxide`),] # select NA rows
+na_rows
+
+# drop NA rows
+wine <- wine %>% drop_na()
+dim(wine)
+
+# convert remaining character columns into double type
+wine <- wine %>% mutate(across(where(is.character), as.double)) 
+summary(wine)
+
+# column names w/o underscore or space
+colnames(wine) <- make.names(colnames(wine))
+
+```
+
+-   b: Use PCA to create a projection of the data to 2D and show a scatter plot with color showing the wine type.
+
+```{r PCA}
+# no near zero variance predictors
+nzv <- nearZeroVar(wine)
+length(nzv)
+
+# remove dependent/categorical variable
+pca.wine <- wine %>% select(-c('type'))
+head(pca.wine)
+
+# pca with scaled/normalized variables
+wine.pca <- prcomp(pca.wine, scale. = TRUE)
+summary(wine.pca)
+
+# screeplot
+screeplot(wine.pca, type = "l") + title(xlab = "PCs")
+
+preProc <- preProcess(pca.wine, method = 'pca', pcaComp = 4)
+wine.pc <- predict(preProc, pca.wine)
+wine.pc$type <- wine$type
+head(wine.pc)
+
+# scatter plot with PCs 1 and 2 by type (1 = red wine, 0 = white wine)
+ggplot(wine.pc, aes(PC1, PC2, color = type)) + geom_point(alpha = 0.5) + labs(title = "PC1 vs PC2 Scatter Plot") + theme(plot.title = element_text(hjust = 0.5))
+```
+
+-   c: We are going to try kNN, SVM and decision trees on this data. Based on the ‘shape’ of the data in the visualization from (b), which do you think will do best and why?
+
+    Based on the 'shape' of the data presented in the scatter plot from the previous question, the kNN will perform best at classification of new data points. The issue with SVM is the granularity of data points at the potential boundaries. There would be too many support vectors along the boundary that it would be difficult to find an optimal hyperplane, even with margin leniency. Additionally, decision trees on this data would produce an overfitted model given the large dataset and non-linear relationship between the components. As a greedy algorithm, the large dataset would produce a computationally expensive model. kNN would perform best with the non-linear data, large data set, and class imbalance.
+
+-   d: Use kNN (tune k), use decision trees (basic rpart method is fine), and SVM (tune C) to predict type from the rest of the variables. Compare the accuracy values – is this what you expected? Can you explain it?
+
+    Note: you will need to fix the columns names for rpart because it is not able to handle the underscores. This code will do the trick (assuming you called your data wine_quality): **colnames(wine_quality) \<- make.names(colnames(wine_quality))**
+
+```{r SVM}
+library(caret)
+library(e1071)
+
+train_control <- trainControl(method = 'cv', number = 10)
+preproc <- c('center', 'scale')
+grid <- expand.grid(C = 10^seq(-5, 1, 0.5))
+# Fit the SVM model
+svm <- train(type ~., data = wine, method = "svmLinear", trControl = train_control, preProc = preproc, tuneGrid = grid)
+# Evaluate fit
+svm
+```
+
+```{r DT}
+library(caret)
+library(lattice)
+
+train_control <- trainControl(method = 'cv', number = 10)
+
+model_tree <- train(type ~., data = wine, method = 'rpart', trControl = train_control)
+model_tree
+
+```
+
+```{r kNN}
+set.seed(123)
+train_control <- trainControl(method="cv", number = 10) 
+
+# tune and fit the model with 10-fold cross validation,
+# standardization, and our specialized tune grid
+knn_fit <- train(type ~ ., 
+                  data = wine,
+                  method = 'knn',
+                  trControl = train_control,
+                  preProcess = c('center', 'scale'),
+                  tuneLength = 10)
+
+# Printing trained model provides report
+knn_fit
+```
+
+SVM generated a model with C = 1 that had an accuracy of 0.9903 and a kappa of 0.9738. The decision tree model with cp = 0.0676 had an accuracy of 0.9567 and a kappa of 0.8826. Finally, kNN generated a model with k = 5, having an accuracy of 0.9869 and a kappa of 0.9646. Given these accuracy levels, the SVM generated the most accurate model, followed closely by kNN model. This was not what was expected; however, the decision tree model was least accurate, which was expected. The accuracy of SMV tells us that there is in fact a hyperplane for the data set that can adequately classify the wine better than the kNN model can.
+
+-   e: Use the same already computed PCA again to show a scatter plot of the data and to visualize the labels for kNN, decision tree and SVM. Note that you do not need to recreate the PCA projection, you have already done this in 1b. Here, you just make a new visualization for each classifier using its labels for color (same points but change the color). Map the color results to the classifier, that is use the “predict” function to predict the class of your data, add it to your data frame and use it as a color. This is done for KNN in the tutorial, it should be similar for the others. Consider and explain the differences in how these classifiers performed.
+
+```{r visualization}
+# Save as PCs as dataframe
+rotated_data = as.data.frame(wine.pca$x)
+
+svm_predict <- predict(svm, wine)
+# Add labels from model prediction as a reference
+rotated_data$Color <- svm_predict
+# Plot and color by labels
+ggplot(data = rotated_data, aes(x = PC1, y = PC2, col = Color)) + geom_point(alpha = 0.3)
+
+
+pred_tree <- predict(model_tree, wine)
+# Add labels from model prediction as a reference
+rotated_data$Color1 <- pred_tree
+# Plot and color by labels
+ggplot(data = rotated_data, aes(x = PC1, y = PC2, col = Color1)) + geom_point(alpha = 0.3)
+
+
+knn_predict <- predict(knn_fit, wine)
+# Add labels from model prediction as a reference
+rotated_data$Color2 <- knn_predict
+# Plot and color by labels
+ggplot(data = rotated_data, aes(x = PC1, y = PC2, col = Color2)) + geom_point(alpha = 0.3)
+
+```
+
+As seen in the scatter plot of the data using the PCs for each classifier, we see the general performance for all the classifiers were similar. There was minimal change to the scatter plot from one classifier to another. The subtle differences among the scatter plot was primarily at the data points along the boundary. The slight difference in performance was likely attributed to the different classifications of data points along the boundary. These differences were expected given the varying algorithm each classifier uses to classify data. The nuanced differences in data classification was confirmed by the accuracy levels from each classifier; all the classifiers had a similar accuracy level.
+
+# Problem 2:
+
+In this question we will use the Sacramento data, which covers available housing in the region of that city. The variables include numerical information about the size of the housing and its price, as well as categorical information like zip code (there are a large but limited number in the area), and the type of unit (condo vs house (coded as residential)).
+
+-   a: Load the data from the tidyverse library with the data(“Sacramento”) command and you should have a variable Sacramento. Because we have categorical, convert them to dummy variables.
+
+```{r load Sacramento}
+
+library(tidyverse)
+data(Sacramento)
+sacramento <- select(Sacramento, everything())
+head(sacramento)
+summary(sacramento)
+
+# dummy variable for each non-classifier, categorical variables (zip, city)
+dummy <- dummyVars(type ~ ., data = sacramento)
+# Transform dummy variables into dataframe
+dummies <- as.data.frame(predict(dummy, newdata = sacramento))
+head(dummies)
+
+dummies$type <- as.factor(sacramento$type)
+```
+
+-   b: With kNN, because of the high dimensionality, which might be a good choice for the distance function?
+
+    With the high dimensionality of the sacramento data set, the best choice for the distance function with kNN would be the Manhattan distance particularly as the data set has sparse data with all the newly created dummy variables. Not only will it be computationally efficient, the Manhattan distance will be robust to noise and outliers.
+
+-   c: Use kNN to classify this data with type as the label. Tune the choice of k plus the type of distance function. Report your results – what values for these parameters were tried, which were chosen, and how did they perform with accuracy?
+
+```{r kNN params}
+library(kknn)
+set.seed(124)
+# tuneGrid with the tuning parameters
+# test a range of k values 3 to 7
+# regular and cosine-based distance functions
+# 1 - Manhattan, 2 - Euclidean
+tuneGrid <- expand.grid(kmax = 3:7, kernel = c("rectangular", "cos"), distance = 1:2)
+train_control <- trainControl(method = 'cv', number = 10)
+
+# tune and fit the model with 10-fold cross validation, standardization, and our specialized tune grid
+kknn_fit <- train(type ~., data = dummies, method = 'kknn', trControl = train_control, preProcess = c('center', 'scale'), tuneGrid = tuneGrid)
+
+# Printing trained model provides report
+kknn_fit
+```
+
+The kmax values that were tried were 3 - 7. The kernels tested were 'cos' and 'rectangular'. The distance tested were 1 (Manhattan) and 2 (Euclidean). The final values used for the model were kmax = 7, distance = 1 and kernel = cos. With these selected parameter values, the kNN model had an accuracy of 0.9485.
+
+# Problem 3:
+
+In this problem we will continue with the wine quality data from Problem 1, but this time we will use clustering. Do not forget to remove the type variable before clustering because that would be cheating by using the label to perform clustering.
+
+```{r kmean data}
+head(wine)
+wine_class <- wine$type
+wine_variables <- wine %>% select(-c(type))
+summary(wine_variables)
+
+# Center scale to standardize the data as clustering relies o n distances and dissimilarities
+preproc <- preProcess(wine_variables, method=c("center", "scale"))
+# Fit data based on preprocessing
+wine_variables <- predict(preproc, wine_variables)
+
+summary(wine_variables)
+```
+
+-   a: Use k-means to cluster the data. Show your usage of silhouette and the elbow method to pick the best number of clusters. Make sure it is using multiple restarts.
+
+```{r kmeans cluster}
+library(stats)
+library(factoextra)
+# Set seed
+set.seed(125)
+
+# Elbow
+fviz_nbclust(wine_variables, kmeans, method = "wss")
+# Silhouette
+fviz_nbclust(wine_variables, kmeans, method = "silhouette")
+
+# Fit the data
+wine_kmeans <- kmeans(wine_variables, centers = 6, nstart = 25)
+# Display the kmeans object information
+wine_kmeans
+
+# Display cluster plot
+fviz_cluster(wine_kmeans, data = wine_variables)
+
+```
+
+-   b: Use hierarchical agglomerative clustering (HAC) to cluster the data. Try at least 2 distance functions and at least 2 linkage functions (cluster distance functions), for a total of 4 parameter combinations. For each parameter combination, perform the clustering.
+
+```{r HAC}
+library(stats)
+library(factoextra)
+
+fviz_nbclust(wine_variables, FUN = hcut, method = "wss")
+fviz_nbclust(wine_variables, FUN = hcut, method = "silhouette")
+
+# Calculate euclidean distances
+dist_mat_euclidean <- dist(wine_variables, method = 'euclidean')
+# Calculate manhattan distances
+dist_mat_manhattan <- dist(wine_variables, method = 'manhattan')
+
+# Determine assembly/agglomeration method and run hclust (average uses mean)
+hfit1 <- hclust(dist_mat_euclidean, method = 'complete')
+hfit2 <- hclust(dist_mat_euclidean, method = 'single')
+
+hfit3 <- hclust(dist_mat_manhattan, method = 'complete')
+hfit4 <- hclust(dist_mat_manhattan, method = 'single')
+
+# dendogram
+plot(hfit1)
+plot(hfit2)
+plot(hfit3)
+plot(hfit4)
+
+# Build the new model
+h1 <- cutree(hfit1, k=6)
+h2 <- cutree(hfit2, k=6)
+h3 <- cutree(hfit3, k=6)
+h4 <- cutree(hfit4, k=6)
+
+# Visualize cluster HAC
+fviz_cluster(list(data = wine_variables, cluster = h1)) + labs(title = "Euclidean Distance w/ Complete Linkage")
+fviz_cluster(list(data = wine_variables, cluster = h2)) + labs(title = "Euclidean Distance w/ Single Linkage")
+fviz_cluster(list(data = wine_variables, cluster = h3)) + labs(title = "Manhattan Distance w/ Complete Linkage")
+fviz_cluster(list(data = wine_variables, cluster = h4)) + labs(title = "Manhattan Distance w/ Single Linkage")
+
+```
+
+-   c: Compare the k-means and HAC clustering by creating a cross tabulation between their labels.
+
+```{r cross tab wine}
+wine_results <- data.frame(Status = wine_class, HAC = h3, Kmeans = wine_kmeans$cluster)
+
+# Crosstab for HAC
+wine_results %>% group_by(HAC) %>% select(HAC, Status) %>% table()
+
+# Crosstab for K Means
+wine_results %>% group_by(Kmeans) %>% select(Kmeans, Status) %>% table()
+
+```
+
+K-means seemed to get relatively better clusters on the data according to both cross tabulations. HAC placed most of the data in the first cluster while struggling to cluster red wine from white wine. Most of the observations were grouped into 1 cluster. K-means on the other hand grouped observation into multiple clusters, creating more nuanced clusters.
+
+
+-   d: For comparison – use PCA to visualize the data in a scatter plot. Create 3 separate plots: use the color of the points to show (1) the type label, (2) the k-means cluster labels and (3) the HAC cluster labels.
+
+```{r three visualizations}
+
+# Assign clusters as a new column HCA
+rotated_data$Clusters1 = as.factor(h3)
+# Plot and color by labels
+ggplot(data = rotated_data, aes(x = PC1, y = PC2, col = Clusters1)) + geom_point(alpha = 0.5) + labs(title = "PC1 vs PC2 HCA Labels Scatter Plot") + theme(plot.title = element_text(hjust = 0.5))
+
+# Assign clusters as a new column k-means
+rotated_data$Clusters = as.factor(wine_kmeans$cluster)
+# Plot and color by labels
+ggplot(data = rotated_data, aes(x = PC1, y = PC2, col = Clusters)) + geom_point(alpha = 0.5) + labs(title = "PC1 vs PC2 K-Means Label Scatter Plot") + theme(plot.title = element_text(hjust = 0.5))
+
+# scatter plot with PCs 1 and 2 by type (1 = red wine, 0 = white wine)
+ggplot(wine.pc, aes(PC1, PC2, color = type)) + geom_point(alpha = 0.5) + labs(title = "PC1 vs PC2 Type Label Scatter Plot") + theme(plot.title = element_text(hjust = 0.5))
+```
+
+-   e: Consider the results of C and D and explain the differences between the clustering results in terms of how the algorithms work.
+
+    In k-means clustering, the algorithm arbitrarily chooses *k* data points as initial centroids, calculating the distance between each data point to other centroids. Once the distance is calculated, the data point is assigned to its closest centroid. After these new clusters are formed, the new centroid is calculated for the new cluster, using different statistical values to determine the new centroid value. These steps are repeated until there no significant change from the iteration or a stopping criterion was met. In HAC, each data point is considered its own cluster. First, the distance is calculated from one cluster to every other cluster. The cluster then links with the closest cluster, creating a larger, new cluster. There are varying linkage methods available, like how there are varying ways to calculate the new centroids in the k-means algorithm. New distances are measured with the new clusters and the remaining clusters. Again, the clusters are merged based on the linkage methods and this process repeats until all clusters have been merged into one, when the HAC can be represented as a dendogram. This dendogram is cut to determine the level, or number of clusters, desired.
+
+# Problem 4:
+
+Back to the Starwars data from a previous assignment! Remember that the variable that lists the actual names and the variables that are actually lists will be a problem, so remove them (name, films, vehicles, starships). Make sure to double check the types of the variables, i.e., that they are numerical or factors as you expect.
+
+```{r star wars data}
+data(starwars)
+star_data <- select(starwars, -c("films", "vehicles", "starships", "name"))
+head(star_data)
+summary(star_data)
+
+# remove rows with missing values
+star_data <- drop_na(star_data)
+dim(star_data)
+summary(star_data)
+
+star_data <- star_data %>% mutate(across(where(is.character), as.factor))
+star_class <- star_data$gender
+star_variables <- star_data %>% select(-c(gender))
+
+```
+
+-   a: Use hierarchical agglomerative clustering to cluster the Starwars data. This time we can leave the categorical variables in place, because we will use the gower metric from daisy in the cluster library to get the distances. Use average linkage. Determine the best number of clusters.
+
+```{r gower}
+# Load library
+library(cluster)
+# Elbow
+fviz_nbclust(star_variables, FUN = hcut, method = "wss")
+# Silhouette
+fviz_nbclust(star_variables, FUN = hcut, method = "silhouette")
+
+# Pass data frame directly with metric = gower to determine distance for mixed variables
+cat_dist_mat <- daisy(star_variables, metric = "gower")
+# Result is a dissimilarity matrix
+cat_dist_mat
+
+# Determine assembly/agglomeration method and run hclust (average uses mean)
+hfit <- hclust(cat_dist_mat, method = 'average')
+hfit
+# Build tree with 3 clusters
+h <- cutree(hfit, k=3)
+h
+
+```
+
+The best number of clusters is 3. 
+
+-   b: Produce the dendogram for (a). How might an anomaly show up in a dendogram? Do you see a Starwars character who does not seem to fit in easily? What is the advantage of considering anomalies this way as opposed to looking for unusual values relative to the mean and standard deviations, as we considered earlier in the course? Disadvantages?
+
+```{r dendogram}
+
+plot(hfit)
+
+```
+
+An anamoly may show up in a dendogram in several ways. The most obvious way to detect anamolies, or outliers, would be to identify any unusual clusters that emerge at certain distances and deviating from the expected pattern of clustering. This could indicate an outlier or an anamoly that doesn't fit well with the remaining data. Another way to stating this would be to identify a cluster that remains isolated at high distances. Given the ways to detect anamolies in a dendogram and based on the dendogram generated, observations 26 and 27 do not seem to fit in easily. These two observations are in close proximity to each other and easily forms a cluster, however, in reference to the other clusters, this cluster is quite distanced from the nearest cluster. Therefore, I'd state these characters do not seem to fit easily. A dendrogram provides a hierarchical representation of the data, showing how observations are related to each other. This context is lost when focusing solely on mean and standard deviations. Anomalies in a dendrogram can reveal patterns and relationships that might not be apparent when examining individual values because of the inherent hierarchial nature of dendrograms, allowing for the identification of clusters and sub-clusters. This can reveal nested patterns and structures in the data that might not be apparent when examining individual values. The disadvantage of using dendograms, which are only generated after HAC has been performed only after which a distance matrix is caculated, is the computational requirements. As the distance to all points from all other points are required to cluster objects using HAC, there are more computations required to generate a dendogram as opposed to calulating the mean and standard deviation of a single attribute.
+
+-   c: Use dummy variables to make this data fully numeric and then use k-means to cluster. Choose the best number of clusters.
+
+```{r dummy variables}
+# dummy variable for each non-classifier, categorical variables
+dummy_star <- dummyVars(gender ~ ., data = star_data)
+
+# Transform dummy variables into dataframe
+dummies_star <- as.data.frame(predict(dummy_star, newdata = star_data))
+head(dummies_star)
+
+# Add target variable
+dummies_star$gender <- as.factor(star_data$gender)
+head(dummies_star)
+
+dummies_star_variables <- dummies_star %>% select(-c(gender))
+dummies_star_target <- dummies_star$gender
+# Set seed
+set.seed(123)
+
+# Elbow
+fviz_nbclust(dummies_star_variables, kmeans, method = "wss")
+# Silhouette
+fviz_nbclust(dummies_star_variables, kmeans, method = "silhouette")
+
+# Fit the data
+star_kmeans <- kmeans(dummies_star_variables, centers = 3, nstart = 25)
+# Display the kmeans object information
+star_kmeans
+
+# Display cluster plot
+fviz_cluster(star_kmeans, data = dummies_star_variables)
+
+```
+
+-   d: Compare the HAC and k-means clustering with a cross tabulation.
+
+```{r cross tab star}
+star_result <- data.frame(Status = star_data$gender, HAC = h, Kmeans = star_kmeans$cluster)
+
+# Crosstab for HAC
+star_result %>% group_by(HAC) %>% select(HAC, Status) %>% table()
+
+# Crosstab for K Means
+star_result %>% group_by(Kmeans) %>% select(Kmeans, Status) %>% table()
+```
+
+Compared to the HAC, k-means clustering performed similarly, likely due to the small sample size of 29. After all the NA rows were removed from the data set, the sample size dropped to 29. However, based on the limited information in the cross tabulation, the k-means clustering performed marginally better than HAC. K-means was able to cluster one more observation into a different cluster than HAC did.
