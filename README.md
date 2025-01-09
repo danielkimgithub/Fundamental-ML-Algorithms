@@ -1,8 +1,9 @@
 # Fundamental-ML-Algorithms
 
 Data Modeling Projects Using R/RStudio
-- Project 1: Data Analysis/Visualization
-- Project 2: SVM
-- Project 3: Decision Tree
-- Project 4: Clustering (Supervised and Unsupervised)
-- Project 5:
+
+- dataPreprocessingVisualization: Load and preprocess data for analysis and visualization
+- Project 2: Data Classfication with SVM Algorithm
+- Project 3: Data Classification with Decision Tree Algorithm
+- Project 4: Data Clustering (Supervised and Unsupervised) with k-mean and KNN Algorithms
+- Project 5: Attempted full data pipeline project: Load, preprocess, clean, transform, statistical analysis/model
